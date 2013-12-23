@@ -1,0 +1,108 @@
+diff --git a/scripts/devtest.sh b/scripts/devtest.sh
+index 3c16d0e..fbbf37b 100755
+--- a/scripts/devtest.sh
++++ b/scripts/devtest.sh
+@@ -1,4 +1,5 @@
+ #!/bin/bash
++set -x
+ #
+ # Demo script for Tripleo - the dev/test story.
+ # This can be run for CI purposes, by passing --trash-my-machine to it.
+@@ -297,7 +298,7 @@ fi #nodocs
+ #      source? #nodocs
+ source devtest_seed.sh #nodocs
+ source devtest_undercloud.sh #nodocs
+-source devtest_overcloud.sh #nodocs
++#source devtest_overcloud.sh #nodocs
+ source devtest_end.sh #nodocs
+ 
+ ## .. rubric:: Footnotes
+diff --git a/scripts/devtest_undercloud.sh b/scripts/devtest_undercloud.sh
+index 3eea07a..1419655 100755
+--- a/scripts/devtest_undercloud.sh
++++ b/scripts/devtest_undercloud.sh
+@@ -46,11 +46,16 @@ source tripleo-undercloud-passwords
+ 
+ ## #. Deploy an undercloud
+ ##    ::
+-make -C $TRIPLEO_ROOT/tripleo-heat-templates undercloud-vm.yaml
+-heat stack-create -f $TRIPLEO_ROOT/tripleo-heat-templates/undercloud-vm.yaml \
+-    -P "PowerUserName=$(whoami);AdminToken=${UNDERCLOUD_ADMIN_TOKEN};AdminPassword=${UNDERCLOUD_ADMIN_PASSWORD};GlancePassword=${UNDERCLOUD_GLANCE_PASSWORD};HeatPassword=${UNDERCLOUD_HEAT_PASSWORD};NeutronPassword=${UNDERCLOUD_NEUTRON_PASSWORD};NovaPassword=${UNDERCLOUD_NOVA_PASSWORD};BaremetalArch=${NODE_ARCH};PowerManager=$POWER_MANAGER;undercloudImage=${UNDERCLOUD_ID}" \
++sed -i 's/baremetal.driver.BareMetalDriver/ironic.driver.IronicDriver/' $TRIPLEO_ROOT/tripleo-heat-templates/undercloud-vm-source.yaml
++#make -C $TRIPLEO_ROOT/tripleo-heat-templates undercloud-vm.yaml
++make -C $TRIPLEO_ROOT/tripleo-heat-templates undercloud-vm-ironic.yaml
++#heat stack-create -f $TRIPLEO_ROOT/tripleo-heat-templates/undercloud-vm.yaml \
++heat stack-create -f $TRIPLEO_ROOT/tripleo-heat-templates/undercloud-vm-ironic.yaml \
++    -P "PowerUserName=$(whoami);AdminToken=${UNDERCLOUD_ADMIN_TOKEN};AdminPassword=${UNDERCLOUD_ADMIN_PASSWORD};GlancePassword=${UNDERCLOUD_GLANCE_PASSWORD};HeatPassword=${UNDERCLOUD_HEAT_PASSWORD};NeutronPassword=${UNDERCLOUD_NEUTRON_PASSWORD};NovaPassword=${UNDERCLOUD_NOVA_PASSWORD};BaremetalArch=${NODE_ARCH};PowerManager=$POWER_MANAGER;undercloudImage=${UNDERCLOUD_ID};IronicPassword=${UNDERCLOUD_IRONIC_PASSWORD}" \
+     undercloud
+ 
++#    -P "PowerUserName=$(whoami);AdminToken=${UNDERCLOUD_ADMIN_TOKEN};AdminPassword=${UNDERCLOUD_ADMIN_PASSWORD};GlancePassword=${UNDERCLOUD_GLANCE_PASSWORD};HeatPassword=${UNDERCLOUD_HEAT_PASSWORD};NeutronPassword=${UNDERCLOUD_NEUTRON_PASSWORD};NovaPassword=${UNDERCLOUD_NOVA_PASSWORD};BaremetalArch=${NODE_ARCH};PowerManager=$POWER_MANAGER;undercloudImage=${UNDERCLOUD_ID}" \
++
+ ##    You can watch the console via virsh/virt-manager to observe the PXE
+ ##    boot/deploy process.  After the deploy is complete, it will reboot into the
+ ##    image.
+@@ -63,7 +68,7 @@ wait_for 60 10 "nova list | grep ctlplane" #nodocs
+ export UNDERCLOUD_IP=$(nova list | grep ctlplane | sed  -e "s/.*=\\([0-9.]*\\).*/\1/")
+ 
+ echo "Waiting for undercloud node to configure br-ctlplane..." #nodocs
+-wait_for 60 10 "echo | nc -w 1 $UNDERCLOUD_IP 22" #nodocs
++wait_for 60 20 "echo | nc -w 1 $UNDERCLOUD_IP 22" #nodocs
+ ssh-keygen -R $UNDERCLOUD_IP
+ 
+ echo "Waiting for cloud-init to configure/restart sshd"  #nodocs
+@@ -93,12 +98,41 @@ setup-endpoints $UNDERCLOUD_IP --glance-password $UNDERCLOUD_GLANCE_PASSWORD \
+ keystone role-create --name heat_stack_user
+ 
+ echo "Waiting for nova to initialise..."
+-wait_for 30 10 nova list
++wait_for 30 20 nova list
+ user-config
+ 
+ setup-neutron 192.0.2.5 192.0.2.24 192.0.2.0/24 192.0.2.1 $UNDERCLOUD_IP ctlplane
+ 
++# add for ironic
++PASSWORD=$UNDERCLOUD_IRONIC_PASSWORD register-endpoint -r "regionOne" -d "Ironic Service" ironic baremetal http://$UNDERCLOUD_IP:6385
++
++ssh heat-admin@$UNDERCLOUD_IP "cat /opt/stack/boot-stack/ironic-ssh-power-key.pub" >> ~/.ssh/authorized_keys
++
++ssh heat-admin@$UNDERCLOUD_IP -- 'sudo cat /root/stackrc' > $TRIPLEO_ROOT/tripleo-incubator/ironicrc
++sed -i "s/localhost/$UNDERCLOUD_IP/" $TRIPLEO_ROOT/tripleo-incubator/ironicrc
++source $TRIPLEO_ROOT/tripleo-incubator/ironicrc
++
++export UNDERCLOUD_MAC=$(create-nodes $NODE_CPU $NODE_MEM $NODE_DISK $NODE_ARCH 1)
++
++HOST_IP=$(ip addr show virbr0 | grep inet | awk '{print $2}' | sed 's/\/[0-9]*//')
++CHASSIS=$(ironic chassis-create -d TestChassis | grep uuid | awk '{print $4}')
++NODE=$(ironic node-create -c $CHASSIS -d pxe_ssh | grep ' uuid ' | awk '{print $4}')
++bash
++ironic port-create -n $NODE -a $UNDERCLOUD_MAC 
++ironic node-update $NODE add \
++ driver_info/ssh_virt_type=virsh \
++ driver_info/ssh_address=$HOST_IP \
++ driver_info/ssh_key_filename=/opt/stack/boot-stack/ironic-ssh-power-key \
++ driver_info/ssh_username=$(whoami)
++
++ironic node-show $NODE
++
++#ironic node-set-power-state $NODE [on|off|reboot]
++ironic node-set-power-state $NODE on
++ironic node-show $NODE
+ 
++echo "undercloud for ironic"
++exit 0
+ ## #. Create two more 'baremetal' node(s) and register them with your undercloud.
+ ##    ::
+ 
+diff --git a/scripts/pull-tools b/scripts/pull-tools
+index 9c47c43..2b8df03 100755
+--- a/scripts/pull-tools
++++ b/scripts/pull-tools
+@@ -19,7 +19,7 @@ set -eu
+ 
+ # This is a cheap mr/cm-alike. Perhaps we should use mr/cm.
+ 
+-TOOLS="https://git.openstack.org/openstack/diskimage-builder https://git.openstack.org/openstack/tripleo-image-elements https://git.openstack.org/openstack/tripleo-heat-templates https://git.openstack.org/openstack/tripleo-incubator"
++TOOLS="https://git.openstack.org/openstack/diskimage-builder https://git.openstack.org/openstack/tripleo-image-elements https://git.openstack.org/openstack/tripleo-heat-templates https://git.openstack.org/openstack/tripleo-incubator https://github.com/NoBodyCam/ironic-element https://github.com/openstack/python-ironicclient"
+ 
+ for TOOL in $TOOLS; do
+     TOOL_BASE=$(basename $TOOL)

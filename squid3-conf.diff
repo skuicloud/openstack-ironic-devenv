@@ -1,0 +1,60 @@
+--- squid.conf.orig	2013-12-15 01:14:12.134876439 -0800
++++ squid.conf	2013-12-18 22:36:37.613248189 -0800
+@@ -898,9 +898,9 @@
+ # Example rule allowing access from your local networks.
+ # Adapt to list your (internal) IP networks from where browsing
+ # should be allowed
+-#acl localnet src 10.0.0.0/8	# RFC1918 possible internal network
+-#acl localnet src 172.16.0.0/12	# RFC1918 possible internal network
+-#acl localnet src 192.168.0.0/16	# RFC1918 possible internal network
++acl localnet src 10.0.0.0/8	# RFC1918 possible internal network
++acl localnet src 172.16.0.0/12	# RFC1918 possible internal network
++acl localnet src 192.168.0.0/16	# RFC1918 possible internal network
+ #acl localnet src fc00::/7       # RFC 4193 local private network range
+ #acl localnet src fe80::/10      # RFC 4291 link-local (directly plugged) machines
+ 
+@@ -1053,7 +1053,7 @@
+ # Example rule allowing access from your local networks.
+ # Adapt localnet in the ACL section to list your (internal) IP networks
+ # from where browsing should be allowed
+-#http_access allow localnet
++http_access allow localnet
+ http_access allow localhost
+ 
+ # And finally deny all other access to this proxy
+@@ -2740,7 +2740,7 @@
+ #	accessed frequently in memory to improve performance whilst low
+ #	enough to keep larger objects from hoarding cache_mem.
+ #Default:
+-# maximum_object_size_in_memory 512 KB
++maximum_object_size_in_memory 1024 MB
+ 
+ #  TAG: memory_cache_shared	on|off
+ #	Controls whether the memory cache is shared among SMP workers.
+@@ -2997,7 +2997,7 @@
+ #
+ 
+ # Uncomment and adjust the following to add a disk cache directory.
+-#cache_dir ufs /var/spool/squid3 100 16 256
++cache_dir aufs /var/spool/squid3 5000 32 256
+ 
+ #  TAG: store_dir_select_algorithm
+ #	How Squid selects which cache_dir to use when the response
+@@ -3076,7 +3076,7 @@
+ #	this value to maximize the byte hit rate improvement of LFUDA!
+ #	See replacement_policy below for a discussion of this policy.
+ #Default:
+-# maximum_object_size 4 MB
++maximum_object_size 1024 MB
+ 
+ #  TAG: cache_swap_low	(percent, 0-100)
+ #	The low-water mark for cache object replacement.
+@@ -6941,7 +6941,7 @@
+ #	By default (off), squid may return a Not Modified response
+ #	based on the age of the cached version.
+ #Default:
+-# refresh_all_ims off
++refresh_all_ims on
+ 
+ #  TAG: reload_into_ims	on|off
+ #	When you enable this option, client no-cache or ``reload''
